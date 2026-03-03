@@ -3,7 +3,7 @@ import { supabase } from "./supabase.js"
 import "./style.css"
 // All files are in root directory (no src folder)
 
-const PIN = "1234"
+const PIN = "5869"
 const SLOTS = ["09:00","10:30","12:00","13:30","15:00","16:30","18:00"]
 const SUN_LAST = "15:00"
 const OFF = [1, 3]
