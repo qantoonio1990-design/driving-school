@@ -3,7 +3,7 @@ import { supabase } from "./supabase.js"
 import "./style.css"
 // All files are in root directory (no src folder)
 
-const PIN = "5869"
+const PIN = "1234"
 const SLOTS = ["09:00","10:30","12:00","13:30","15:00","16:30","18:00"]
 const SUN_LAST = "15:00"
 const OFF = [1, 3]
@@ -322,7 +322,7 @@ function StudentView({ st, bk, bl, aB, rB, onB, toast }) {
       {mb.length > 0 && <div className="cd">
         <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>Мои записи</div>
         {mb.slice(0,5).map((b,i) => {
-          const d = new Date(b.d + "T12:00:00")
+          const d = new Date(b.d.split("-")[0], b.d.split("-")[1]-1, b.d.split("-")[2])
           return <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:i<Math.min(mb.length,5)-1?"1px solid #e2e8f0":"none"}}>
             <span style={{fontSize:13}}><strong>{DF[d.getDay()]}</strong>, {fmtD(d)}</span><span className="bdg">{b.t}</span>
           </div>
@@ -332,7 +332,7 @@ function StudentView({ st, bk, bl, aB, rB, onB, toast }) {
     </div>
     {cf && <div className="mo" onClick={() => sCf(null)}><div className="ml" onClick={e => e.stopPropagation()}>
       <h2>Подтвердить?</h2>
-      <div className="cf"><p>Записаться на <strong>{cf.t}</strong>, {fmtD(new Date(cf.d+"T12:00:00"))}?</p>
+      <div className="cf"><p>Записаться на <strong>{cf.t}</strong>, {fmtD(new Date(cf.d.split("-")[0], cf.d.split("-")[1]-1, cf.d.split("-")[2]))}?</p>
         <div className="ca"><button className="b bp" style={{flex:1}} onClick={() => {aB(cf.d,cf.t,st.id);sCf(null)}}>Да</button>
           <button className="b bo" style={{flex:1}} onClick={() => sCf(null)}>Нет</button></div></div>
     </div></div>}
