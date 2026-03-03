@@ -11,7 +11,7 @@ const DN = ["Вс","Пн","Вт","Ср","Чт","Пт","Сб"]
 const DF = ["Воскресенье","Понедельник","Вторник","Среда","Четверг","Пятница","Суббота"]
 const MN = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"]
 
-const dKey = d => d.toISOString().split("T")[0]
+const dKey = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`
 const today = () => { const d = new Date(); d.setHours(0,0,0,0); return d }
 const addD = (d,n) => { const r = new Date(d); r.setDate(r.getDate()+n); return r }
 const fmtD = d => `${d.getDate()} ${MN[d.getMonth()]}`
