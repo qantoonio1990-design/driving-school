@@ -52,7 +52,10 @@ async function dbDeleteStudent(id) {
 }
 
 async function dbAddBooking(date, time, studentId) {
-  await supabase.from("bookings").insert({ date, time_slot: time, student_id: studentId })
+  const { data: existing } = await supabase.from("bookings").select("student_id").eq("date", date).eq("time_slot", time).maybeSingle()
+  if (existing) throw new Error("Слот уже занят")
+  const { error } = await supabase.from("bookings").insert({ date, time_slot: time, student_id: studentId })
+  if (error) throw new Error(error.message)
 }
 
 async function dbRemoveBooking(date, time) {
@@ -173,7 +176,6 @@ function Login({ onA, onSt, sts }) {
     <div className="ct"><div className="cd" style={{textAlign:"center"}}>
       <div className="pi">{pin.map((d,i) => <input key={i} id={`p${i}`} className="pd" type="password" inputMode="numeric" maxLength={1} value={d} onChange={e => hPin(i,e.target.value)} style={er?{borderColor:"#ef4444"}:{}} autoFocus={i===0}/>)}</div>
       {er && <p style={{color:"#ef4444",fontSize:13,fontWeight:600}}>Неверный PIN</p>}
-      <p style={{fontSize:12,color:"#64748b",marginTop:12}}>PIN: 1234</p>
     </div></div>
   </div>
 
@@ -358,30 +360,63 @@ export default function App() {
     })()
   }, [])
 
+  useEffect(() => {
+    const iv = setInterval(async () => {
+      try {
+        const [s, b, blocked] = await Promise.all([dbLoadStudents(), dbLoadBookings(), dbLoadBlocked()])
+        sSts(s); sBk(b); sBl(blocked)
+      } catch(e) { console.error("Poll error", e) }
+    }, 30000)
+    return () => clearInterval(iv)
+  }, [])
+
+  useEffect(() => {
+    const bookingsCh = supabase.channel('bookings-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, async () => {
+        const b = await dbLoadBookings()
+        sBk(b)
+      })
+      .subscribe()
+    const studentsCh = supabase.channel('students-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, async () => {
+        const s = await dbLoadStudents()
+        sSts(s)
+      })
+      .subscribe()
+    const blockedCh = supabase.channel('blocked-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'blocked_slots' }, async () => {
+        const b = await dbLoadBlocked()
+        sBl(b)
+      })
+      .subscribe()
+    return () => {
+      bookingsCh.unsubscribe()
+      studentsCh.unsubscribe()
+      blockedCh.unsubscribe()
+    }
+  }, [])
+
   const toast = useCallback(m => { sTt(m); setTimeout(() => sTt(null), 2500) }, [])
 
   const aB = useCallback(async (d, t, sid) => {
     const k = `${d}_${t}`
-    sBk(p => { if(p[k]) return p; return {...p, [k]: sid} })
-    sSts(p => p.map(s => s.id === sid ? {...s, completed: (s.completed||0)+1} : s))
-    await dbAddBooking(d, t, sid)
-    const st = sts.find(s => s.id === sid)
-    if (st) await dbUpdateStudent({...st, completed: (st.completed||0)+1})
-    toast("Записано!")
-  }, [toast, sts])
+    try {
+      await dbAddBooking(d, t, sid)
+      sBk(p => { if(p[k]) return p; return {...p, [k]: sid} })
+      toast("Записано!")
+    } catch(err) {
+      toast(err.message || "Ошибка записи")
+      const b = await dbLoadBookings()
+      sBk(b)
+    }
+  }, [toast])
 
   const rB = useCallback(async (d, t) => {
     const k = `${d}_${t}`
-    const sid = bk[k]
     sBk(p => { const n = {...p}; delete n[k]; return n })
-    if (sid) {
-      sSts(p => p.map(s => s.id === sid ? {...s, completed: Math.max(0,(s.completed||0)-1)} : s))
-      const st = sts.find(s => s.id === sid)
-      if (st) await dbUpdateStudent({...st, completed: Math.max(0,(st.completed||0)-1)})
-    }
     await dbRemoveBooking(d, t)
     toast("Отменено")
-  }, [toast, sts, bk])
+  }, [toast])
 
   const tB = useCallback(async (d, t) => {
     const k = `${d}_${t}`
