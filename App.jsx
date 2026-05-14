@@ -251,7 +251,7 @@ function Admin({ sts, setSts, bk, bl, aB, rB, tB, bD, onL, toast }) {
         : sts.map(s => <div key={s.id} className="sr" onClick={() => {sEd({...s}); sM({t:"ed"})}}>
           <div className="av">{s.name[0]}</div>
           <div className="ri"><div className="nm">{s.name}</div><div className="ph">{s.phone||"—"} · {s.code}</div></div>
-          <div className="rs"><div className="cn">{s.completed||0}/{s.total||25}</div><div className="lb">занятий</div></div>
+          <div className="rs"><div className="cn">{s.completed||0}/{s.total||25}</div><div className="lb">занятий</div><div style={{fontSize:11,color:"#64748b",marginTop:2}}>Осталось: {Math.max(0, (s.total||25)-(s.completed||0))}</div></div>
         </div>)}
       </div>}
     </div>
@@ -316,19 +316,35 @@ function StudentView({ st, bk, bl, aB, rB, onB, toast }) {
   }
 
   const pc = Math.round(((st.completed||0) / (st.total||25)) * 100)
+  const remaining = Math.max(0, (st.total||25) - (st.completed||0))
+  const td = dKey(today())
+  const upcoming = mb.filter(b => b.d >= td)
+  const past = mb.filter(b => b.d < td)
 
   return <div>
-    <div className="hd"><h1>Привет, {st.name}!</h1><p>{st.completed||0} из {st.total||25} занятий</p><div className="ha"><button className="hb" onClick={onB}><Ic t="bk"/></button></div></div>
+    <div className="hd"><h1>Привет, {st.name}!</h1><p>{st.completed||0} из {st.total||25} занятий · Осталось: {remaining}</p><div className="ha"><button className="hb" onClick={onB}><Ic t="bk"/></button></div></div>
     <div className="ct">
       <div className="pb"><div className="pf" style={{width:`${pc}%`}}/></div>
       {mb.length > 0 && <div className="cd">
         <div style={{fontSize:13,fontWeight:700,marginBottom:8}}>Мои записи</div>
-        {mb.slice(0,5).map((b,i) => {
-          const d = new Date(b.d.split("-")[0], b.d.split("-")[1]-1, b.d.split("-")[2])
-          return <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:i<Math.min(mb.length,5)-1?"1px solid #e2e8f0":"none"}}>
-            <span style={{fontSize:13}}><strong>{DF[d.getDay()]}</strong>, {fmtD(d)}</span><span className="bdg">{b.t}</span>
-          </div>
-        })}
+        {upcoming.length > 0 && <>
+          <div style={{fontSize:11,color:"#2563eb",fontWeight:600,marginBottom:6,textTransform:"uppercase"}}>Предстоящие</div>
+          {upcoming.map((b,i) => {
+            const d = new Date(b.d.split("-")[0], b.d.split("-")[1]-1, b.d.split("-")[2])
+            return <div key={b.d+b.t} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:i<upcoming.length-1?"1px solid #e2e8f0":"none"}}>
+              <span style={{fontSize:13}}><strong>{DF[d.getDay()]}</strong>, {fmtD(d)}</span><span className="bdg">{b.t}</span>
+            </div>
+          })}
+        </>}
+        {past.length > 0 && <>
+          <div style={{fontSize:11,color:"#64748b",fontWeight:600,marginTop:10,marginBottom:6,textTransform:"uppercase"}}>Прошедшие</div>
+          {past.map((b,i) => {
+            const d = new Date(b.d.split("-")[0], b.d.split("-")[1]-1, b.d.split("-")[2])
+            return <div key={b.d+b.t} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:i<past.length-1?"1px solid #e2e8f0":"none"}}>
+              <span style={{fontSize:13}}><strong>{DF[d.getDay()]}</strong>, {fmtD(d)}</span><span className="bdg" style={{opacity:0.6}}>{b.t}</span>
+            </div>
+          })}
+        </>}
       </div>}
       <Week bk={bk} bl={bl} sts={[st]} onS={onS} isA={false} sd={sd} setSd={setSd}/>
     </div>
