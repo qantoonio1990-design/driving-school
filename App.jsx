@@ -3,7 +3,6 @@ import { supabase } from "./supabase.js"
 import "./style.css"
 // All files are in root directory (no src folder)
 
-const PIN = "5869"
 const SLOTS = ["09:00","10:30","12:00","13:30","15:00","16:30","18:00"]
 const SUN_LAST = "15:00"
 const OFF = [1, 3]
@@ -19,7 +18,7 @@ const endT = t => { const[h,m]=t.split(":").map(Number); const v=h*60+m+90; retu
 const getSlots = d => { const w=d.getDay(); if(OFF.includes(w)) return []; return w===0 ? SLOTS.filter(t=>t<=SUN_LAST) : [...SLOTS] }
 const genCode = () => { const c="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; let r=""; for(let i=0;i<4;i++) r+=c[~~(Math.random()*c.length)]; return r }
 
-// ─── DB helpers ───
+// ─── DB helpers: ИНСТРУКТОР (залогинен через Supabase Auth, RLS пускает) ───
 async function dbLoadStudents() {
   const { data } = await supabase.from("students").select("*").order("created_at")
   return (data || []).map(s => ({ id: s.id, name: s.name, phone: s.phone || "", code: s.code, total: s.total_lessons, completed: s.completed_lessons }))
@@ -68,6 +67,39 @@ async function dbAddBlocked(date, time) {
 
 async function dbRemoveBlocked(date, time) {
   await supabase.from("blocked_slots").delete().eq("date", date).eq("time_slot", time)
+}
+
+// ─── RPC helpers: УЧЕНИК (аноним, всё через серверные функции) ───
+async function rpcStudentLogin(code) {
+  const { data, error } = await supabase.rpc("student_login", { p_code: code })
+  if (error || !data || !data.length) return null
+  const s = data[0]
+  return { id: s.id, name: s.name, phone: s.phone || "", code: code.trim().toUpperCase(), total: s.total_lessons, completed: s.completed_lessons }
+}
+
+async function rpcOccupancy() {
+  const { data } = await supabase.rpc("occupancy")
+  const bk = {}, bl = {}
+  ;(data || []).forEach(r => { const k = `${r.date}_${r.time_slot}`; if (r.kind === "blocked") bl[k] = true; else bk[k] = true })
+  return { bk, bl }
+}
+
+async function rpcMyBookings(code) {
+  const { data } = await supabase.rpc("my_bookings", { p_code: code })
+  const m = {}
+  ;(data || []).forEach(r => { m[`${r.date}_${r.time_slot}`] = true })
+  return m
+}
+
+async function rpcBook(code, date, time) {
+  const { data, error } = await supabase.rpc("student_book", { p_code: code, p_date: date, p_time: time })
+  if (error) throw new Error(error.message)
+  return data
+}
+
+async function rpcCancel(code, date, time) {
+  const { error } = await supabase.rpc("student_cancel", { p_code: code, p_date: date, p_time: time })
+  if (error) throw new Error(error.message)
 }
 
 // ─── Icon ───
@@ -127,7 +159,7 @@ function Week({ bk, bl, sts, onS, isA, sd, setSd }) {
           <div className="st">{t}</div>
           <div className="si">
             {bx ? <><div className="sn" style={{color:"#64748b"}}>Закрыто</div><div className="ss">Недоступно</div></>
-            : bo ? <><div className="sn">{su?.name||"?"}</div><div className="ss">{t}–{endT(t)}</div></>
+            : bo ? <><div className="sn">{su?.name||"Занято"}</div><div className="ss">{t}–{endT(t)}</div></>
             : <><div className="sn" style={{color:"#10b981"}}>Свободно</div><div className="ss">{t}–{endT(t)}</div></>}
           </div>
           {isA && bx && <button className="b bg bs" onClick={e => {e.stopPropagation(); onS("ub",d,t)}} style={{color:"#2563eb"}}><Ic t="ul" s={16}/></button>}
@@ -140,25 +172,29 @@ function Week({ bk, bl, sts, onS, isA, sd, setSd }) {
 }
 
 // ─── Login ───
-function Login({ onA, onSt, sts }) {
+function Login({ onA, onSt }) {
   const [m, sM] = useState(null)
-  const [pin, sP] = useState(["","","",""])
-  const [er, sE] = useState(false)
+  const [er, sE] = useState("")
   const [cd, sC] = useState("")
+  const [email, sEmail] = useState("")
+  const [pw, sPw] = useState("")
+  const [busy, sB] = useState(false)
 
-  const hPin = (i, v) => {
-    if (v.length > 1) return
-    const n = [...pin]; n[i] = v; sP(n); sE(false)
-    if (v && i < 3) document.getElementById(`p${i+1}`)?.focus()
-    if (i === 3 && v) {
-      if (n.join("") === PIN) onA()
-      else { sE(true); sP(["","","",""]); setTimeout(() => document.getElementById("p0")?.focus(), 100) }
-    }
+  const hInstr = async () => {
+    if (!email.trim() || !pw) return
+    sB(true); sE("")
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw })
+    sB(false)
+    if (error) sE("Неверная почта или пароль")
+    else onA()
   }
 
-  const hSt = () => {
-    const s = sts.find(x => x.code === cd.trim().toUpperCase())
-    if (s) onSt(s); else sE(true)
+  const hSt = async () => {
+    if (!cd.trim()) return
+    sB(true); sE("")
+    const s = await rpcStudentLogin(cd)
+    sB(false)
+    if (s) onSt(s); else sE("Код не найден")
   }
 
   if (!m) return <div>
@@ -166,26 +202,30 @@ function Login({ onA, onSt, sts }) {
       <div style={{fontSize:48,marginBottom:8}}>🚗</div><h1>Автошкола</h1><p>Запись на вождение</p>
     </div>
     <div className="ct" style={{marginTop:8}}>
-      <button className="b bp bf" style={{padding:16,fontSize:16,marginBottom:10}} onClick={() => sM("s")}>🎓 Я ученик</button>
-      <button className="b bo bf" style={{padding:16,fontSize:16}} onClick={() => sM("a")}>⚙️ Инструктор</button>
+      <button className="b bp bf" style={{padding:16,fontSize:16,marginBottom:10}} onClick={() => {sE("");sM("s")}}>🎓 Я ученик</button>
+      <button className="b bo bf" style={{padding:16,fontSize:16}} onClick={() => {sE("");sM("a")}}>⚙️ Инструктор</button>
     </div>
   </div>
 
   if (m === "a") return <div>
-    <div className="hd"><h1>Вход инструктора</h1><p>PIN-код</p><div className="ha"><button className="hb" onClick={() => {sM(null);sP(["","","",""]);sE(false)}}><Ic t="bk"/></button></div></div>
-    <div className="ct"><div className="cd" style={{textAlign:"center"}}>
-      <div className="pi">{pin.map((d,i) => <input key={i} id={`p${i}`} className="pd" type="password" inputMode="numeric" maxLength={1} value={d} onChange={e => hPin(i,e.target.value)} style={er?{borderColor:"#ef4444"}:{}} autoFocus={i===0}/>)}</div>
-      {er && <p style={{color:"#ef4444",fontSize:13,fontWeight:600}}>Неверный PIN</p>}
+    <div className="hd"><h1>Вход инструктора</h1><p>Почта и пароль</p><div className="ha"><button className="hb" onClick={() => {sM(null);sE("");sEmail("");sPw("")}}><Ic t="bk"/></button></div></div>
+    <div className="ct"><div className="cd">
+      <label style={{fontSize:13,fontWeight:700,marginBottom:6,display:"block"}}>Почта</label>
+      <input className="ip" type="email" autoComplete="username" placeholder="you@example.com" value={email} onChange={e => {sEmail(e.target.value);sE("")}}/>
+      <label style={{fontSize:13,fontWeight:700,margin:"12px 0 6px",display:"block"}}>Пароль</label>
+      <input className="ip" type="password" autoComplete="current-password" placeholder="Пароль" value={pw} onChange={e => {sPw(e.target.value);sE("")}} onKeyDown={e => e.key==="Enter"&&hInstr()}/>
+      {er && <p style={{color:"#ef4444",fontSize:13,fontWeight:600,marginTop:6}}>{er}</p>}
+      <button className="b bp bf" style={{marginTop:12}} onClick={hInstr} disabled={busy||!email.trim()||!pw}>{busy?"Вход…":"Войти"}</button>
     </div></div>
   </div>
 
   return <div>
-    <div className="hd"><h1>Вход ученика</h1><p>Введите код</p><div className="ha"><button className="hb" onClick={() => {sM(null);sE(false);sC("")}}><Ic t="bk"/></button></div></div>
+    <div className="hd"><h1>Вход ученика</h1><p>Введите код</p><div className="ha"><button className="hb" onClick={() => {sM(null);sE("");sC("")}}><Ic t="bk"/></button></div></div>
     <div className="ct"><div className="cd">
       <label style={{fontSize:13,fontWeight:700,marginBottom:6,display:"block"}}>Код ученика</label>
-      <input className="ip" placeholder="Например: AB12" value={cd} onChange={e => {sC(e.target.value.toUpperCase());sE(false)}} style={er?{borderColor:"#ef4444"}:{}}/>
-      {er && <p style={{color:"#ef4444",fontSize:13,fontWeight:600,marginTop:6}}>Не найден</p>}
-      <button className="b bp bf" style={{marginTop:12}} onClick={hSt} disabled={!cd.trim()}>Войти</button>
+      <input className="ip" placeholder="Например: AB12" value={cd} onChange={e => {sC(e.target.value.toUpperCase());sE("")}} onKeyDown={e => e.key==="Enter"&&hSt()} style={er?{borderColor:"#ef4444"}:{}}/>
+      {er && <p style={{color:"#ef4444",fontSize:13,fontWeight:600,marginTop:6}}>{er}</p>}
+      <button className="b bp bf" style={{marginTop:12}} onClick={hSt} disabled={busy||!cd.trim()}>{busy?"Вход…":"Войти"}</button>
       <p style={{fontSize:12,color:"#64748b",marginTop:12,textAlign:"center"}}>Код выдаёт инструктор</p>
     </div></div>
   </div>
@@ -297,10 +337,45 @@ function Admin({ sts, setSts, bk, bl, aB, rB, tB, bD, onL, toast }) {
   </div>
 }
 
-// ─── Student View ───
-function StudentView({ st, bk, bl, aB, rB, onB, toast }) {
+// ─── Student View (данные только через RPC) ───
+function StudentView({ st, onB, toast }) {
   const [sd, setSd] = useState(today())
   const [cf, sCf] = useState(null)
+  const [bk, sBk] = useState({})
+  const [bl, sBl] = useState({})
+
+  const load = useCallback(async () => {
+    try {
+      const [occ, mine] = await Promise.all([rpcOccupancy(), rpcMyBookings(st.code)])
+      const bkMap = {}
+      Object.keys(occ.bk).forEach(k => { bkMap[k] = "x" })   // занято кем-то
+      Object.keys(mine).forEach(k => { bkMap[k] = st.id })    // моя запись
+      sBk(bkMap); sBl(occ.bl)
+    } catch(e) { console.error("Student load error", e) }
+  }, [st.code, st.id])
+
+  useEffect(() => {
+    load()
+    const iv = setInterval(load, 30000)
+    return () => clearInterval(iv)
+  }, [load])
+
+  const aB = async (d, t) => {
+    try {
+      const r = await rpcBook(st.code, d, t)
+      if (r === "ok") toast("Записано!")
+      else if (r === "taken") toast("Слот уже занят")
+      else if (r === "blocked") toast("Слот недоступен")
+      else toast("Не удалось записаться")
+    } catch(e) { toast("Ошибка записи") }
+    load()
+  }
+
+  const rB = async (d, t) => {
+    try { await rpcCancel(st.code, d, t); toast("Отменено") }
+    catch(e) { toast("Ошибка") }
+    load()
+  }
 
   const mb = useMemo(() =>
     Object.entries(bk).filter(([,v]) => v === st.id)
@@ -308,7 +383,7 @@ function StudentView({ st, bk, bl, aB, rB, onB, toast }) {
       .sort((a,b) => a.d === b.d ? a.t.localeCompare(b.t) : a.d.localeCompare(b.d))
   , [bk, st.id])
 
-  const onS = (a, d, t, su) => {
+  const onS = (a, d, t) => {
     if (a === "b") sCf({d,t})
     else if (a === "i" && bk[`${d}_${t}`] === st.id) {
       if (confirm("Отменить запись?")) rB(d, t)
@@ -351,7 +426,7 @@ function StudentView({ st, bk, bl, aB, rB, onB, toast }) {
     {cf && <div className="mo" onClick={() => sCf(null)}><div className="ml" onClick={e => e.stopPropagation()}>
       <h2>Подтвердить?</h2>
       <div className="cf"><p>Записаться на <strong>{cf.t}</strong>, {fmtD(new Date(cf.d.split("-")[0], cf.d.split("-")[1]-1, cf.d.split("-")[2]))}?</p>
-        <div className="ca"><button className="b bp" style={{flex:1}} onClick={() => {aB(cf.d,cf.t,st.id);sCf(null)}}>Да</button>
+        <div className="ca"><button className="b bp" style={{flex:1}} onClick={() => {aB(cf.d,cf.t);sCf(null)}}>Да</button>
           <button className="b bo" style={{flex:1}} onClick={() => sCf(null)}>Нет</button></div></div>
     </div></div>}
   </div>
@@ -366,54 +441,32 @@ export default function App() {
   const [cs, sCs] = useState(null)
   const [tt, sTt] = useState(null)
 
+  const toast = useCallback(m => { sTt(m); setTimeout(() => sTt(null), 2500) }, [])
+
+  // Восстановить сессию инструктора или показать вход
   useEffect(() => {
     (async () => {
-      try {
-        const [s, b, blocked] = await Promise.all([dbLoadStudents(), dbLoadBookings(), dbLoadBlocked()])
-        sSts(s); sBk(b); sBl(blocked)
-      } catch(e) { console.error("Load error", e) }
-      sV("lg")
+      const { data } = await supabase.auth.getSession()
+      sV(data?.session ? "a" : "lg")
     })()
   }, [])
 
+  // Загрузка данных инструктора + опрос раз в 30 сек (пока открыта панель)
+  const loadInstr = useCallback(async () => {
+    try {
+      const [s, b, blocked] = await Promise.all([dbLoadStudents(), dbLoadBookings(), dbLoadBlocked()])
+      sSts(s); sBk(b); sBl(blocked)
+    } catch(e) { console.error("Load error", e) }
+  }, [])
+
   useEffect(() => {
-    const iv = setInterval(async () => {
-      try {
-        const [s, b, blocked] = await Promise.all([dbLoadStudents(), dbLoadBookings(), dbLoadBlocked()])
-        sSts(s); sBk(b); sBl(blocked)
-      } catch(e) { console.error("Poll error", e) }
-    }, 30000)
+    if (v !== "a") return
+    loadInstr()
+    const iv = setInterval(loadInstr, 30000)
     return () => clearInterval(iv)
-  }, [])
+  }, [v, loadInstr])
 
-  useEffect(() => {
-    const bookingsCh = supabase.channel('bookings-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, async () => {
-        const b = await dbLoadBookings()
-        sBk(b)
-      })
-      .subscribe()
-    const studentsCh = supabase.channel('students-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, async () => {
-        const s = await dbLoadStudents()
-        sSts(s)
-      })
-      .subscribe()
-    const blockedCh = supabase.channel('blocked-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'blocked_slots' }, async () => {
-        const b = await dbLoadBlocked()
-        sBl(b)
-      })
-      .subscribe()
-    return () => {
-      bookingsCh.unsubscribe()
-      studentsCh.unsubscribe()
-      blockedCh.unsubscribe()
-    }
-  }, [])
-
-  const toast = useCallback(m => { sTt(m); setTimeout(() => sTt(null), 2500) }, [])
-
+  // Handlers инструктора (прямая запись, RLS пускает залогиненного)
   const aB = useCallback(async (d, t, sid) => {
     const k = `${d}_${t}`
     try {
@@ -458,13 +511,18 @@ export default function App() {
     toast("Готово")
   }, [toast])
 
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut()
+    sCs(null); sSts([]); sBk({}); sBl({}); sV("lg")
+  }, [])
+
   if (v === "l") return <div className="app"><div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh"}}>
     <p style={{fontFamily:"Nunito,sans-serif",fontSize:18,color:"#64748b",fontWeight:700}}>Загрузка...</p></div></div>
 
   return <div className="app">
-    {v === "lg" && <Login onA={() => sV("a")} onSt={s => {sCs(s); sV("sv")}} sts={sts}/>}
-    {v === "a" && <Admin sts={sts} setSts={sSts} bk={bk} bl={bl} aB={aB} rB={rB} tB={tB} bD={bD} onL={() => sV("lg")} toast={toast}/>}
-    {v === "sv" && cs && <StudentView st={cs} bk={bk} bl={bl} aB={aB} rB={rB} onB={() => sV("lg")} toast={toast}/>}
+    {v === "lg" && <Login onA={() => sV("a")} onSt={s => {sCs(s); sV("sv")}}/>}
+    {v === "a" && <Admin sts={sts} setSts={sSts} bk={bk} bl={bl} aB={aB} rB={rB} tB={tB} bD={bD} onL={logout} toast={toast}/>}
+    {v === "sv" && cs && <StudentView st={cs} onB={() => {sCs(null); sV("lg")}} toast={toast}/>}
     {tt && <div className="tt">{tt}</div>}
   </div>
 }
