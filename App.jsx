@@ -274,7 +274,14 @@ function Admin({ sts, setSts, bk, bl, aB, rB, tB, bD, onL, toast }) {
   }
 
   const cB = () => { if (!ss || !ml) return; aB(ml.d, ml.tm, ss); sM(null) }
-  const tc = useMemo(() => Object.keys(bk).filter(k => k.startsWith(dKey(today()))).length, [bk])
+  const td = dKey(today())
+  const tc = useMemo(() => Object.keys(bk).filter(k => k.startsWith(td)).length, [bk, td])
+  // Откатано = записи в прошлом (сегодняшнее занятие ещё не завершено)
+  const doneBy = useMemo(() => {
+    const m = {}
+    Object.entries(bk).forEach(([k, sid]) => { if (k.split("_")[0] < td) m[sid] = (m[sid] || 0) + 1 })
+    return m
+  }, [bk, td])
 
   return <div>
     <div className="hd"><h1>Панель инструктора</h1><p>Расписание и ученики</p><div className="ha"><button className="hb" onClick={onL}><Ic t="bk"/></button></div></div>
@@ -288,11 +295,11 @@ function Admin({ sts, setSts, bk, bl, aB, rB, tB, bD, onL, toast }) {
       {tab === "u" && <div>
         <button className="b bp bf" style={{marginBottom:12}} onClick={() => sM({t:"ad"})}><Ic t="pl" s={18}/> Добавить</button>
         {sts.length === 0 ? <div className="em"><div className="ic">👤</div><p>Нет учеников</p></div>
-        : sts.map(s => <div key={s.id} className="sr" onClick={() => {sEd({...s}); sM({t:"ed"})}}>
+        : sts.map(s => { const done = doneBy[s.id]||0; return <div key={s.id} className="sr" onClick={() => {sEd({...s}); sM({t:"ed"})}}>
           <div className="av">{s.name[0]}</div>
           <div className="ri"><div className="nm">{s.name}</div><div className="ph">{s.phone||"—"} · {s.code}</div></div>
-          <div className="rs"><div className="cn">{s.completed||0}/{s.total||25}</div><div className="lb">занятий</div><div style={{fontSize:11,color:"#64748b",marginTop:2}}>Осталось: {Math.max(0, (s.total||25)-(s.completed||0))}</div></div>
-        </div>)}
+          <div className="rs"><div className="cn">{done}/{s.total||25}</div><div className="lb">занятий</div><div style={{fontSize:11,color:"#64748b",marginTop:2}}>Осталось: {Math.max(0, (s.total||25)-done)}</div></div>
+        </div>})}
       </div>}
     </div>
 
@@ -311,7 +318,6 @@ function Admin({ sts, setSts, bk, bl, aB, rB, tB, bD, onL, toast }) {
         <input className="ip" value={ed.name} onChange={e => sEd({...ed,name:e.target.value})}/>
         <input className="ip" placeholder="Телефон" value={ed.phone} onChange={e => sEd({...ed,phone:e.target.value})}/>
         <input className="ip" type="number" placeholder="Всего" value={ed.total} onChange={e => sEd({...ed,total:parseInt(e.target.value)||0})}/>
-        <input className="ip" type="number" placeholder="Проведено" value={ed.completed} onChange={e => sEd({...ed,completed:parseInt(e.target.value)||0})}/>
         <div className="lb">Код ученика: <strong>{ed.code}</strong></div>
         <button className="b bp bf" onClick={updSt}>Сохранить</button>
         <button className="b bd bf" onClick={() => {if(confirm("Удалить?")) delSt(ed.id)}}>Удалить</button>
@@ -323,7 +329,7 @@ function Admin({ sts, setSts, bk, bl, aB, rB, tB, bD, onL, toast }) {
       : <div style={{display:"flex",flexDirection:"column",gap:6}}>
         {sts.map(s => <div key={s.id} className="sr" style={{borderColor:ss===s.id?"#2563eb":undefined,background:ss===s.id?"#dbeafe":undefined}} onClick={() => sSs(s.id)}>
           <div className="av">{s.name[0]}</div>
-          <div className="ri"><div className="nm">{s.name}</div><div className="ph">{s.completed||0}/{s.total||25}</div></div>
+          <div className="ri"><div className="nm">{s.name}</div><div className="ph">{doneBy[s.id]||0}/{s.total||25}</div></div>
           {ss === s.id && <Ic t="ok"/>}
         </div>)}
         <button className="b bp bf" style={{marginTop:8}} onClick={cB} disabled={!ss}>Записать</button>
@@ -390,14 +396,15 @@ function StudentView({ st, onB, toast }) {
     }
   }
 
-  const pc = Math.round(((st.completed||0) / (st.total||25)) * 100)
-  const remaining = Math.max(0, (st.total||25) - (st.completed||0))
   const td = dKey(today())
   const upcoming = mb.filter(b => b.d >= td)
   const past = mb.filter(b => b.d < td)
+  const done = past.length          // откатано = прошедшие записи
+  const pc = Math.round((done / (st.total||25)) * 100)
+  const remaining = Math.max(0, (st.total||25) - done)
 
   return <div>
-    <div className="hd"><h1>Привет, {st.name}!</h1><p>{st.completed||0} из {st.total||25} занятий · Осталось: {remaining}</p><div className="ha"><button className="hb" onClick={onB}><Ic t="bk"/></button></div></div>
+    <div className="hd"><h1>Привет, {st.name}!</h1><p>{done} из {st.total||25} занятий · Осталось: {remaining}</p><div className="ha"><button className="hb" onClick={onB}><Ic t="bk"/></button></div></div>
     <div className="ct">
       <div className="pb"><div className="pf" style={{width:`${pc}%`}}/></div>
       {mb.length > 0 && <div className="cd">
